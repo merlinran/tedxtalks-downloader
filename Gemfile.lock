@@ -1,4 +1,5 @@
 GEM
+  remote: http://ruby.taobao.org/
   specs:
     mime-types (2.3)
     rest-client (1.6.7)
