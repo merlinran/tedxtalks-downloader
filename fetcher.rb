@@ -36,7 +36,7 @@ def fetch()
         fetchedCount += result['videos'].length
         printf "fetched %d of %d records\n", fetchedCount, total
         result['videos'].each do |record|
-          unless db[record['id']] and db[record['id']]["downloaded"]
+          if record["state"] == "normal" and record["public_type"] == "all" then
             record.delete('user')
             record["publish-date"] = Date.strptime(record['published'], '%F %T')
             if oldest > record["publish-date"] then
@@ -80,6 +80,10 @@ def exec(fmt, *params)
   cmd = sprintf(fmt, *params)
   print "> ", cmd
   system(cmd)
+end
+
+def escape_file_name(title, extension="")
+  "$'" + title.sub("'", "\\\\\'").sub(":", "-") + extension + "'"
 end
 
 root="~/Downloads/TEDxTalks/"
@@ -127,9 +131,9 @@ db.each do |id, record|
   begin
     exec "you-get -F %s %s # %s %s\n", format, record["link"], title, publish_month
     print "converting to mp3...\n"
-    exec "ffmpeg -loglevel fatal -y -i '%s.mp4' '%s.mp3'\n", title, title
-    exec "ffmpeg -loglevel fatal -y -i '%s.mp3' -metadata album='%s' '%s'\n", title, event, target
+    exec "ffmpeg -loglevel error -y -i %s %s\n", escape_file_name(title, ".mp4"), escape_file_name(title, ".mp3")
+    exec "ffmpeg -loglevel error -y -i %s -metadata album='%s' %s\n", escape_file_name(title, ".mp3"), event, escape_file_name(target)
   ensure
-    exec "rm '%s.mp4' '%s.mp3'\n\n", title, title
+    exec "rm %s %s\n\n", escape_file_name(title, ".mp4"), escape_file_name(title, ".mp3")
   end
 end
