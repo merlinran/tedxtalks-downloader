@@ -1,2 +1,6 @@
 config.yml
 videos.yml
+*.flv*
+*.mp*
+*.txt
+.ropeproject/*
