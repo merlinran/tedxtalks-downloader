@@ -82,10 +82,6 @@ def exec(fmt, *params)
   system(cmd)
 end
 
-def escape_file_name(title, extension="")
-  "$'" + title.sub("'", "\\\\\'").sub(":", "-") + extension + "'"
-end
-
 root="~/Downloads/TEDxTalks/"
 format_order = {
   "3gphd" => 9999,
@@ -115,7 +111,7 @@ db.each do |id, record|
   format = record["streamtypes"].sort do |a, b|
     format_order[a] - format_order[b]
   end[0]
-  title = record["title"]
+  title = record["title"].gsub(/["':\\\/]/, "")
   opath = File.expand_path(File.join(root, event))
   exec "mkdir -p '%s'\n", opath
   target_desc = File.join(opath, title) + ".txt"
@@ -129,11 +125,11 @@ db.each do |id, record|
     next
   end
   begin
-    exec "you-get -F %s %s # %s %s\n", format, record["link"], title, publish_month
+    exec "you-get -F %s -O '%s.mp4' %s\n", format, title, record["link"]
     print "converting to mp3...\n"
-    exec "ffmpeg -loglevel error -y -i %s %s\n", escape_file_name(title, ".mp4"), escape_file_name(title, ".mp3")
-    exec "ffmpeg -loglevel error -y -i %s -metadata album='%s' %s\n", escape_file_name(title, ".mp3"), event, escape_file_name(target)
+    exec "ffmpeg -loglevel error -y -i '%s.mp4' '%s.mp3'\n", title, title
+    exec "ffmpeg -loglevel error -y -i '%s.mp3' -metadata album='%s' '%s'\n", title, event, target
   ensure
-    exec "rm %s %s\n\n", escape_file_name(title, ".mp4"), escape_file_name(title, ".mp3")
+    exec "rm '%s.mp4' '%s.mp3'\n\n", title, title
   end
 end
