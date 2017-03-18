@@ -30,7 +30,8 @@ def fetch()
       page = 1
       begin
         txt = RestClient.get('https://openapi.youku.com/v2/videos/by_user.json',
-                             params: {client_id: client_id, user_id: user_id, last_item: last_item, page: page, count: 100, orderby: "published"})
+                             params: {client_id: client_id, user_id: user_id, last_item: last_item, page: page, orderby: "published"})
+                             # params: {client_id: client_id, user_id: user_id, last_item: last_item, page: page, count: 100, orderby: "published"})
         result = JSON.parse(txt)
         total = result["total"].to_i
         fetchedCount += result['videos'].length
