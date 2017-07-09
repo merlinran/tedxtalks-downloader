@@ -12,10 +12,40 @@ def videoArrayToHash(array)
   end
 end
 
+def get_page(user_id, page, since)
+  uri = URI("http://i.youku.com/u/#{user_id}/videos")
+  params = { order: 1, page: page }
+  uri.query = URI.encode_www_form(params)
+  res = Net::HTTP.get_response(uri)
+  if not res.is_a?(Net::HTTPSuccess) then
+    return []
+  end
+  result = []
+  res.body.scan(/<div class="v-meta">.*?<\/div>\s*<\/div>\s*<\/div>/) do |m|
+    link = m.scan(/<a href="(.*?)"/)[0]
+    if link.nil?
+      next
+    end
+    link = "http:"+link[0]
+    title = m.scan(/title="(.*?)"/)[0][0]
+    publish_time = m.scan(/<span class="v-publishtime">(.*?)<\/span>/)[0][0]
+    publish_time.scan(/(\d\d-\d\d) [\d:]+/) do |m|
+      publish_time = "#{Date.today().year}-#{m[0]}"
+    end
+    publish_time.force_encoding('utf-8').scan(/(\d)天前/u) do |m|
+      publish_time = (Date.today() - m[0].to_i).to_s
+    end
+    if since.to_s > publish_time
+      break
+    end
+    result = result.push({title: title, link: link, publish_date: publish_time})
+  end
+  printf "%d results on page %d\n", result.length, page
+  return result
+end
+
 def fetch()
-  db = {}
-  # db = YAML.load_file('videos.yml') if File.exists?('videos.yml')
-  #
+  db = []
   config = YAML.load_file('config.yml')
   client_id = config['client_id']
   since = config['since'] || Date.new(1970,1,1)
@@ -24,56 +54,16 @@ def fetch()
     if config['user_id'] then
       user_id = config['user_id']
       printf "fetching video records of user# %s...\n", user_id
-      fetchedCount = 0
-      last_item = nil
       oldest = Date.today
       page = 1
       begin
-        txt = RestClient.get('https://openapi.youku.com/v2/videos/by_user.json',
-                             params: {client_id: client_id, user_id: user_id, last_item: last_item, page: page, orderby: "published"})
-                             # params: {client_id: client_id, user_id: user_id, last_item: last_item, page: page, count: 100, orderby: "published"})
-        result = JSON.parse(txt)
-        total = result["total"].to_i
-        fetchedCount += result['videos'].length
-        printf "fetched %d of %d records\n", fetchedCount, total
-        result['videos'].each do |record|
-          if record["state"] == "normal" and record["public_type"] == "all" then
-            record.delete('user')
-            record["publish-date"] = Date.strptime(record['published'], '%F %T')
-            if oldest > record["publish-date"] then
-              oldest = record["publish-date"]
-            end
-            db[record['id']] = record
-          end
-        end
-        if oldest < since then
-          printf "stop fetching talks older than %s\n", since
-          break
-        end
+        res = get_page(user_id, page, since)
+        db = db.concat(res)
         page += 1
-        last_item = result["last_item"]
-      end while fetchedCount < total
-    end
-
-    if config['playlists'] then
-      config['playlists'].each do |pl|
-        result = RestClient.get('https://openapi.youku.com/v2/playlists/videos.json',
-                                params: {client_id: config['client_id'],
-                                         playlist_id: pl})
-        db.update(videoArrayToHash(JSON.parse(result)['videos']))
-      end
-    end
-
-  rescue => e
-    print e #.response
-    print e.response
-  ensure
-    db.delete_if do |id, record|
-      published = record["publish-date"]
-      !(since <= published && published <= till)
+      end while res.length > 0
     end
   end
-
+  printf "%d videos pending download since %s\n", db.length, since
   return db
 end
 
@@ -84,14 +74,13 @@ def exec(fmt, *params)
 end
 
 root="~/Downloads/TEDxTalks/"
-format_order = {
-  "3gphd" => 9999,
-  "flvhd" => 1,
-  "mp4" => 2,
-  "hd2" => 3,
-  "hd3" => 4,
+format_ext = {
+  "3gphd" => "3gp",
+  "flvhd" => "flv",
+  "mp4" => "mp4",
+  "hd2" => "mp4",
+  "hd3" => "mp4",
 }
-format_order.default = 9999
 
 OptionParser.new do |opts|
   opts.banner = "Usage: fetcher.rb [-o dir]"
@@ -105,32 +94,35 @@ File.open('videos.yml', 'w') do |f|
   YAML.dump(db, f)
 end
 
-db.each do |id, record|
-  matched = /TE[DX]x([A-z'@0-9]+)/.match(record["title"])
-  publish_month = record["published"][0, 7]
+db.each do |record|
+  matched = /TE[DX]x([A-z'@0-9]+)/.match(record[:title])
+  publish_month = record[:publish_date][0, 7]
   event = matched ? publish_month + "-" + matched[1].sub("'", "") : publish_month
-  format = record["streamtypes"].sort do |a, b|
-    format_order[a] - format_order[b]
-  end[0]
-  title = record["title"].gsub(/["':\\\/]/, "")
+  title = record[:title].gsub(/["':\\\/]/, "")
   opath = File.expand_path(File.join(root, event))
   exec "mkdir -p '%s'\n", opath
-  target_desc = File.join(opath, title) + ".txt"
-  File.open(target_desc, 'w') do |f|
-    f.print record["desc"]
-  end
-
-  target = File.join(opath, title) + ".mp3"
-  if File.exist?(target) then
+  mp3_full_path = File.join(opath, title) + ".mp3"
+  if File.exist?(mp3_full_path) then
     printf "Skipping already downloaded talk '%s'\n", title
     next
   end
   begin
-    exec "you-get -F %s -O '%s.mp4' %s\n", format, title, record["link"]
+    video_path = ''
+    for format, ext in format_ext
+      begin
+        video_path = "#{title}.#{ext}"
+        exec "you-get -F %s -O '%s' %s\n", format, title, record[:link]
+      rescue
+        next
+      end
+      if File.exist?(video_path) then
+        break
+      end
+    end
     print "converting to mp3...\n"
-    exec "ffmpeg -loglevel error -y -i '%s.mp4' '%s.mp3'\n", title, title
-    exec "ffmpeg -loglevel error -y -i '%s.mp3' -metadata album='%s' '%s'\n", title, event, target
+    exec "ffmpeg -loglevel error -y -i '%s' '%s.mp3'\n", video_path, title
+    exec "ffmpeg -loglevel error -y -i '%s.mp3' -metadata album='%s' '%s'\n", title, event, mp3_full_path
   ensure
-    exec "rm '%s.mp4' '%s.mp3'\n\n", title, title
+    exec "rm -f '%s' '%s.mp3'\n\n", video_path, title
   end
 end
